@@ -61,7 +61,7 @@ git clone https://github.com/babelqaq/astrbot_plugin_MergeChat.git
 用户: 你好
 用户: 今天天气怎么样
 用户: 我想出去玩
-（等待 6 秒）
+
 Bot: 今天天气晴朗，适合出去玩哦！🌞
 ```
 ## 其他
