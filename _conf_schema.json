@@ -1,0 +1,21 @@
+{
+  "wait_time": {
+    "description": "防抖等待时间（秒）",
+    "type": "float",
+    "default": 6.0,
+    "hint": "用户停止输入后等待多久再合并消息。值越大，等待越久，合并的消息越多。",
+    "obvious_hint": true
+  },
+  "cleanup_interval": {
+    "description": "会话清理间隔（秒）",
+    "type": "int",
+    "default": 120,
+    "hint": "定期检查并清理过期会话的时间间隔。"
+  },
+  "session_timeout": {
+    "description": "会话超时时间（秒）",
+    "type": "int",
+    "default": 600,
+    "hint": "会话无活动多久后自动清理。建议为等待时间的 60 倍以上。"
+  }
+}
