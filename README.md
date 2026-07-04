@@ -1,4 +1,4 @@
-消息合并回复插件 / Compose Supplement Reply
+# 消息合并回复插件 / Compose Supplement Reply
 
 ## 📖 简介 / Introduction
 
