@@ -7,7 +7,7 @@ import time
 from typing import Dict, List, Optional
 
 
-@register("Compose Supplement Reply", "babelqaq", "对用户的多条新消息进行整合并回复", "1.0.26")
+@register("MergeChat", "babelqaq", "对用户的多条新消息进行整合并回复", "1.0.26")
 class PrivateDebounceReply(Star):
     """私聊消息防抖合并插件"""
 
