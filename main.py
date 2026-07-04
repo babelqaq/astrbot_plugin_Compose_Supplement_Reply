@@ -7,9 +7,9 @@ import time
 from typing import Dict, List, Optional
 
 
-@register("Compose Supplement Reply", "babelqaq", "对用户的多条新消息进行整合并回复", "1.0.18")
+@register("Compose Supplement Reply", "babelqaq", "对用户的多条新消息进行整合并回复", "1.0.19")
 class PrivateDebounceReply(Star):
-    """私聊消息防抖合并插件 - 优化版"""
+    """私聊消息防抖合并插件 - 长等待版"""
 
     def __init__(self, context: Context):
         super().__init__(context)
@@ -18,17 +18,22 @@ class PrivateDebounceReply(Star):
         self.lock: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self.last_activity: Dict[str, float] = {}
         
-        # 【优化】调整默认参数，适应普通人输入速度
-        self.wait_time: float = 20.0  # 防抖等待时间
-        self.max_wait_time: float = 60.0  # 最大等待时间，防止无限等待
-        self.cleanup_interval: int = 60
-        self.session_timeout: int = 300
+        # 【核心调整】等待时间改为 10 秒
+        self.wait_time: float = 10.0  # 防抖等待时间（秒）
+        self.min_wait_time: float = 3.0  # 最小等待时间限制
+        self.max_wait_time: float = 30.0  # 最大等待时间限制
+        
+        # 【配套优化】清理和超时时间相应延长
+        self.cleanup_interval: int = 120  # 清理间隔延长到 2 分钟
+        self.session_timeout: int = 600  # 会话超时延长到 10 分钟
         
         self._cleanup_task: Optional[asyncio.Task] = None
 
     async def initialize(self):
         """插件初始化"""
-        logger.info(f"[PrivateDebounceReply] 插件初始化完成，等待时间: {self.wait_time}秒")
+        logger.info(f"[PrivateDebounceReply] 插件初始化完成")
+        logger.info(f"[PrivateDebounceReply] 等待时间: {self.wait_time}秒")
+        logger.info(f"[PrivateDebounceReply] 会话超时: {self.session_timeout}秒")
         self._cleanup_task = asyncio.create_task(self._cleanup_sessions())
 
     async def _cleanup_sessions(self):
@@ -54,7 +59,7 @@ class PrivateDebounceReply(Star):
                                 pass
                         self.last_activity.pop(session_id, None)
                         self.lock.pop(session_id, None)
-                        logger.info(f"[Cleanup] 清理会话: {session_id}")
+                        logger.info(f"[Cleanup] 清理过期会话: {session_id}")
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -81,13 +86,17 @@ class PrivateDebounceReply(Star):
         async with self.lock[session_id]:
             # 缓存消息
             self.buffers[session_id].append(msg)
-            logger.info(f"[Debounce] 会话 {session_id} 缓冲消息: {msg[:30]}... (缓冲区: {len(self.buffers[session_id])} 条)")
+            
+            # 详细日志：显示当前缓冲区状态
+            buffer_count = len(self.buffers[session_id])
+            logger.info(f"[Debounce] 会话 {session_id} 缓冲消息 #{buffer_count}: {msg[:30]}...")
+            logger.info(f"[Debounce] 当前缓冲区: {buffer_count} 条消息，等待 {self.wait_time}s 后合并")
 
             # 取消旧任务
             old_task = self.tasks.get(session_id)
             if old_task and not old_task.done():
                 old_task.cancel()
-                logger.debug(f"[Debounce] 取消会话 {session_id} 的旧任务")
+                logger.debug(f"[Debounce] 取消会话 {session_id} 的旧任务，重新计时")
 
             # 创建新任务
             self.tasks[session_id] = asyncio.create_task(
@@ -100,44 +109,46 @@ class PrivateDebounceReply(Star):
     async def _debounce(self, session_id: str, event: AstrMessageEvent):
         """防抖核心逻辑"""
         try:
-            # 【关键】等待防抖时间
+            # 等待防抖时间
+            logger.debug(f"[Debounce] 会话 {session_id} 开始等待 {self.wait_time}s")
             await asyncio.sleep(self.wait_time)
 
             async with self.lock[session_id]:
                 messages = self.buffers.get(session_id, [])
                 if not messages:
+                    logger.debug(f"[Debounce] 会话 {session_id} 缓冲区为空，跳过")
                     return
 
-                # 【优化】检查是否还有新消息（防抖重置检测）
+                # 检查是否还有新消息（防抖重置检测）
                 current_time = time.time()
                 last_time = self.last_activity.get(session_id, current_time)
                 time_since_last = current_time - last_time
                 
-                # 如果距离最后一条消息的时间小于防抖时间的 80%，说明用户还在输入，重新等待
-                if time_since_last < self.wait_time * 0.8:
+                # 如果距离最后一条消息的时间小于防抖时间的 70%，说明用户还在输入
+                # 使用 70% 的阈值，让用户有更充裕的输入时间
+                if time_since_last < self.wait_time * 0.7:
                     logger.debug(f"[Debounce] 会话 {session_id} 检测到新消息({time_since_last:.1f}s 前)，重新等待")
                     self.tasks[session_id] = asyncio.create_task(
                         self._debounce(session_id, event)
                     )
                     return
 
-                # 【优化】如果消息数量较多，可以适当缩短等待时间
-                # 但这里保持统一等待，确保用户体验一致
-                
                 # 合并消息
                 merged_text = self._merge_messages(messages)
                 message_count = len(messages)
                 
                 # 后台详细日志
-                logger.info(f"[Debounce] ========== 合并消息详情 ==========")
+                logger.info(f"[Debounce] ========================================")
                 logger.info(f"[Debounce] 会话ID: {session_id}")
-                logger.info(f"[Debounce] 原始消息数: {message_count}")
+                logger.info(f"[Debounce] 合并消息数: {message_count}")
+                logger.info(f"[Debounce] 等待时间: {self.wait_time}s")
+                logger.info(f"[Debounce] 最后消息距今: {time_since_last:.1f}s")
+                logger.info(f"[Debounce] --- 原始消息 ---")
                 for idx, msg in enumerate(messages, 1):
                     logger.info(f"[Debounce]   {idx}. {msg}")
-                logger.info(f"[Debounce] 合并后的消息:")
+                logger.info(f"[Debounce] --- 合并结果 ---")
                 logger.info(f"[Debounce] {merged_text}")
-                logger.info(f"[Debounce] 等待时间: {self.wait_time}s")
-                logger.info(f"[Debounce] =====================================")
+                logger.info(f"[Debounce] ========================================")
 
                 # 清空缓存
                 self.buffers[session_id] = []
@@ -147,12 +158,13 @@ class PrivateDebounceReply(Star):
                     event.metadata = {}
                 event.metadata['is_merged'] = True
                 event.metadata['merged_count'] = message_count
+                event.metadata['wait_time'] = self.wait_time
                 event.metadata['original_messages'] = messages
 
                 # 发送合并后的消息
                 await event.send(event.plain_result(merged_text))
                 
-                logger.info(f"[Debounce] 已发送合并消息")
+                logger.info(f"[Debounce] ✅ 已发送合并消息到 LLM")
 
         except asyncio.CancelledError:
             logger.debug(f"[Debounce] 会话 {session_id} 任务取消")
@@ -192,18 +204,22 @@ class PrivateDebounceReply(Star):
         
         用法：
         /debounce_config              - 查看当前配置
-        /debounce_config wait_time 3.5 - 设置等待时间（秒），建议 2.0-5.0
+        /debounce_config wait_time 15 - 设置等待时间（秒）
         """
         args = event.message_str.strip().split()
         
         if len(args) == 1:
             info = (
-                f"📊 当前防抖配置\n"
-                f"⏱️  等待时间: {self.wait_time} 秒\n"
-                f"🧹 清理间隔: {self.cleanup_interval} 秒\n"
-                f"⏰ 会话超时: {self.session_timeout} 秒\n\n"
-                f"💡 提示: 等待时间建议设为 2.0-5.0 秒\n"
-                f"   太短会过早合并，太长会影响体验"
+                f"📊 **当前防抖配置**\n\n"
+                f"⏱️  等待时间: `{self.wait_time}` 秒\n"
+                f"⏰ 会话超时: `{self.session_timeout}` 秒 ({self.session_timeout//60} 分钟)\n"
+                f"🧹 清理间隔: `{self.cleanup_interval}` 秒\n\n"
+                f"📝 **建议值**\n"
+                f"• 快速回复: 2-3 秒\n"
+                f"• 日常聊天: 5-8 秒\n"
+                f"• 详细输入: 10-15 秒\n"
+                f"• 当前设置: {self.wait_time} 秒\n\n"
+                f"💡 修改: `/debounce_config wait_time [秒数]`"
             )
             yield event.plain_result(info)
             return
@@ -211,18 +227,32 @@ class PrivateDebounceReply(Star):
         if len(args) == 3 and args[1] == "wait_time":
             try:
                 value = float(args[2])
-                if value < 1.0:
-                    yield event.plain_result("❌ 等待时间不能小于 1.0 秒")
+                if value < self.min_wait_time:
+                    yield event.plain_result(f"❌ 等待时间不能小于 {self.min_wait_time} 秒")
                     return
-                if value > 10.0:
-                    yield event.plain_result("❌ 等待时间不能大于 10.0 秒")
+                if value > self.max_wait_time:
+                    yield event.plain_result(f"❌ 等待时间不能大于 {self.max_wait_time} 秒")
                     return
                 
                 old_value = self.wait_time
                 self.wait_time = value
-                yield event.plain_result(f"✅ 等待时间已从 {old_value}s 调整为 {value}s")
                 
-                # 注意：这里没有持久化存储，如需持久化可以添加 KV 存储
+                # 同步调整相关参数
+                # 会话超时设为等待时间的 60 倍，最少 300 秒
+                new_timeout = max(300, int(value * 60))
+                self.session_timeout = new_timeout
+                
+                # 清理间隔设为等待时间的 12 倍，最少 60 秒
+                new_cleanup = max(60, int(value * 12))
+                self.cleanup_interval = new_cleanup
+                
+                yield event.plain_result(
+                    f"✅ 配置已更新\n"
+                    f"⏱️  等待时间: {old_value}s → {value}s\n"
+                    f"⏰ 会话超时: {self.session_timeout}s ({self.session_timeout//60} 分钟)\n"
+                    f"🧹 清理间隔: {self.cleanup_interval}s"
+                )
+                
             except ValueError:
                 yield event.plain_result("❌ 请输入有效的数字")
             return
