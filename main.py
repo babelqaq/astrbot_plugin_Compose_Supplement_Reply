@@ -7,7 +7,7 @@ import time
 from typing import Dict, List, Optional
 
 
-@register("Compose Supplement Reply", "babelqaq", "对用户的多条新消息进行整合并回复", "1.0.25")
+@register("Compose Supplement Reply", "babelqaq", "对用户的多条新消息进行整合并回复", "1.0.26")
 class PrivateDebounceReply(Star):
     """私聊消息防抖合并插件"""
 
@@ -94,7 +94,7 @@ class PrivateDebounceReply(Star):
                     )
                     return
 
-                merged_text = "\n".join(messages)  # 使用换行符合并，节省 Token
+                merged_text = "\n".join(messages)
                 self.buffers[session_id] = []
                 await self._call_llm_and_reply(event, merged_text)
 
@@ -131,11 +131,26 @@ class PrivateDebounceReply(Star):
             for provider_id in providers_to_try:
                 try:
                     logger.info(f"[LLM] 尝试模型: {provider_id}")
+                    
+                    # 记录开始时间
+                    start_time = time.time()
+                    
                     llm_resp = await self.context.llm_generate(
                         chat_provider_id=provider_id,
                         prompt=merged_text,
                     )
+                    
+                    # 计算响应时长
+                    elapsed_time = time.time() - start_time
+                    
                     reply_text = llm_resp.completion_text if llm_resp else "（LLM 未返回有效回复）"
+                    
+                    # 后台输出：模型名称、响应时长、输出内容
+                    logger.info(
+                        f"[LLM] 响应成功 | 模型: {provider_id} | 耗时: {elapsed_time:.2f}s | "
+                        f"输出: {reply_text[:100]}{'...' if len(reply_text) > 100 else ''}"
+                    )
+                    
                     await event.send(event.plain_result(reply_text))
                     await self._save_conversation(event, merged_text, reply_text)
                     return
