@@ -24,10 +24,9 @@ Compose Supplement Reply is an AstrBot plugin that merges multiple private messa
 |------|------|
 | ✅ **私聊防抖合并** | 在用户停止输入后等待指定时间（默认 6 秒），自动合并该期间内的所有消息 |
 | ✅ **直接 LLM 调用** | 合并后直接调用大语言模型生成回复，不重复进入消息管道 |
-| ✅ **智能标点补全** | 合并时自动为句子补全标点，提升阅读体验 |
 | ✅ **对话历史保存** | 自动将合并后的消息和 LLM 回复存入会话历史，保持上下文连贯 |
-| ✅ **可视化配置** | 支持通过 WebUI 调整防抖时间、清理间隔等参数，无需修改代码 |
-| ✅ **轻量高效** | 自动清理过期会话，避免内存泄漏 |
+| ✅ **可视化配置** | 支持通过 WebUI 调整防抖时间、清理间隔等参数 |
+| ✅ **轻量设置** | 自动清理过期会话 |
 
 ---
 
@@ -39,7 +38,7 @@ Compose Supplement Reply is an AstrBot plugin that merges multiple private messa
 ### 方法二：手动安装
 ```bash
 cd /path/to/astrbot/data/plugins
-git clone https://github.com/your-repo/astrbot_plugin_Compose_Supplement_Reply.git
+git clone https://github.com/babelqaq/astrbot_plugin_Compose_Supplement_Reply.git
 ```
 
 # 配置与使用示例
@@ -54,7 +53,7 @@ git clone https://github.com/your-repo/astrbot_plugin_Compose_Supplement_Reply.g
 |--------|------|--------|------|
 | `wait_time` | float | 6.0 | 用户停止输入后的等待时间（秒），值越大合并的消息越多 |
 | `cleanup_interval` | int | 120 | 清理过期会话的检查间隔（秒） |
-| `session_timeout` | int | 600 | 会话无活动后的超时时间（秒），建议为 `wait_time` 的 60 倍以上 |
+| `session_timeout` | int | 600 | 会话无活动后的超时时间（秒） |
 
 ## 🚀 使用示例 / Usage Example
 
