@@ -1,15 +1,13 @@
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
-from astrbot.api.message_components import Plain
-from astrbot.core.message.message_event import MessageChain
 import asyncio
 from collections import defaultdict
 import time
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional
 
 
-@register("Compose Supplement Reply", "babelqaq", "对用户的多条新消息进行整合并回复", "1.0.14")
+@register("Compose Supplement Reply", "babelqaq", "对用户的多条新消息进行整合并回复", "1.0.15")
 class PrivateDebounceReply(Star):
     """私聊消息防抖合并插件
     
@@ -179,9 +177,8 @@ class PrivateDebounceReply(Star):
                 # 6. 清空缓存
                 self.buffers[session_id] = []
 
-                # 7. 构建并发送消息（使用文档推荐的链式调用）
-                message_chain = MessageChain().message(merged_text)
-                await event.send(message_chain)
+                # 7. 使用 plain_result 发送消息（最可靠的方式，无需导入 MessageChain）
+                await event.send(event.plain_result(merged_text))
                 
                 logger.info(f"[Debounce] 已发送合并消息到 LLM")
 
