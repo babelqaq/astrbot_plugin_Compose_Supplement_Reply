@@ -3,10 +3,10 @@
 ## 📖 简介 / Introduction
 
 **中文**  
-消息合并回复插件是一个 AstrBot 插件，用于将用户在私聊中短时间内发送的多条消息合并为一条，再交由 LLM 统一处理并生成回复。
+本插件将用户在私聊中短时间内发送的多条消息合并为一条，再交由 LLM 统一处理并生成回复。
 
 **English**  
-Compose Supplement Reply is an AstrBot plugin that merges multiple private messages sent within a short time into one, then sends the merged content to the LLM for unified processing and reply.
+This is an AstrBot plugin that merges multiple private messages sent within a short time into one, then sends the merged content to the LLM for unified processing and reply.
 
 ### 适用场景 / Use Cases
 
