@@ -64,6 +64,8 @@ git clone https://github.com/babelqaq/astrbot_plugin_Compose_Supplement_Reply.gi
 （等待 6 秒）
 Bot: 今天天气晴朗，适合出去玩哦！🌞
 ```
-
+## 其他
+该插件输出内容在Astrbot自带的ChatUI里无法显示，但可以在后台看见
+在OneBot v11+个人QQ上输出正常，没有问题。其他平台暂未测试，欢迎反馈。
 
 
