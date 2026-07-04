@@ -19,7 +19,7 @@ class PrivateDebounceReply(Star):
         self.last_activity: Dict[str, float] = {}
         
         # 可配置参数
-        self.wait_time: float = 1.5
+        self.wait_time: float = 20
         self.cleanup_interval: int = 60
         self.session_timeout: int = 300
         
