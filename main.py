@@ -1,13 +1,14 @@
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
-import astrbot.api.message_components as Comp
+from astrbot.api.message_components import Plain
+from astrbot.core.message.message_event import MessageChain
 import asyncio
 from collections import defaultdict
 import time
 
 
-@register("Compose Supplement Reply", "babelqaq", "对用户的多条新消息进行整合并回复", "1.0.5")
+@register("Compose Supplement Reply", "babelqaq", "对用户的多条新消息进行整合并回复", "1.0.6")
 class PrivateDebounceReply(Star):
 
     def __init__(self, context: Context):
@@ -126,11 +127,16 @@ class PrivateDebounceReply(Star):
                 # 清空缓存
                 self.buffers[session_id] = []
 
-                # 构建合并后的消息链
-                message_chain = [Comp.Plain(merged_text)]
+                # 创建 MessageChain 对象
+                # 方法1：使用 MessageChain 构造函数
+                message_chain = MessageChain()
+                message_chain.chain = [Plain(merged_text)]
+                
+                # 或者方法2：直接创建包含 Plain 的 MessageChain
+                # from astrbot.core.message.message_event import MessageChain
+                # message_chain = MessageChain([Plain(merged_text)])
                 
                 # 使用官方推荐的 event.send() 方法发送合并后的消息
-                # 这样会重新进入消息处理流程，包括LLM请求
                 await event.send(message_chain)
                 
                 logger.info(f"[Debounce] 已发送合并后的消息到LLM")
