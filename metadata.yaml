@@ -3,4 +3,4 @@ display_name: Compose Supplement Reply # 用于展示的名字（需要版本 >=
 desc: 对用户的多条新消息进行整合并回复。 # 插件简介
 version: v1.0.0 # 版本号
 author: babelqaq # 作者
-repo:  https://github.com/babelqaq/astrbot_plugin_Multi_line-expansion # 插件的仓库地址
+repo:  https://github.com/babelqaq/astrbot_plugin_Compose_Supplement_Reply # 插件的仓库地址
