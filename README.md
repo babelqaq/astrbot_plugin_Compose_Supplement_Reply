@@ -1,4 +1,4 @@
-# 多条消息合并回复插件 / Compose Supplement Reply
+# 多条消息合并回复插件 / MergeChat
 
 ## 📖 简介 / Introduction
 
