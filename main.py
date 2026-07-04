@@ -5,7 +5,7 @@ import asyncio
 from collections import defaultdict
 
 
-@register("Compose Supplement Reply", "babelqaq", "对用户的多条新消息进行整合并回复", "1.0.0")
+@register("Compose Supplement Reply", "babelqaq", "对用户的多条新消息进行整合并回复", "1.0.1")
 class StableDebounceSafe(Star):
 
     def __init__(self, context: Context):
@@ -30,16 +30,20 @@ class StableDebounceSafe(Star):
 
         async with self.locks[session]:
 
+            # 1. 缓冲消息
             self.buffers[session].append(msg)
 
+            # 2. 取消旧任务（防抖核心）
             task = self.tasks.get(session)
             if task and not task.done():
                 task.cancel()
 
+            # 3. 创建新的 flush 任务
             self.tasks[session] = asyncio.create_task(
                 self._flush(session, event)
             )
 
+            # 4. 阻断当前 LLM 请求
             event.stop_event()
 
     async def _flush(self, session: str, event: AstrMessageEvent):
@@ -47,8 +51,8 @@ class StableDebounceSafe(Star):
         try:
             await asyncio.sleep(self.delay)
 
+            # 取出并合并消息（必须在锁内保证一致性）
             async with self.locks[session]:
-
                 msgs = self.buffers.get(session, [])
                 if not msgs:
                     return
@@ -56,10 +60,12 @@ class StableDebounceSafe(Star):
                 merged = "\n".join(msgs)
                 self.buffers[session].clear()
 
-                logger.info(f"[Debounce SAFE MERGED]\n{merged}")
+            # ⭐ 后台日志输出
+            logger.info(f"[Debounce SAFE MERGED]\n{merged}")
 
-                # ⭐⭐⭐ 修复：plain_result不是异步方法，不需要await
-                event.plain_result(merged)
+            # ⭐ 关键：重新进入 LLM 链路
+            # 注意：这里不要再 hold lock
+            await event.send(merged)
 
         except asyncio.CancelledError:
             pass
@@ -68,7 +74,6 @@ class StableDebounceSafe(Star):
             logger.error(f"[Debounce SAFE] error: {e}")
 
     async def terminate(self):
-        # 取消所有任务
         for task in self.tasks.values():
             if task and not task.done():
                 task.cancel()
