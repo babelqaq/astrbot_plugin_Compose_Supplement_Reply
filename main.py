@@ -7,7 +7,7 @@ from collections import defaultdict
 import time
 
 
-@register("Compose Supplement Reply", "babelqaq", "对用户的多条新消息进行整合并回复", "1.0.9")
+@register("Compose Supplement Reply", "babelqaq", "对用户的多条新消息进行整合并回复", "1.0.10")
 class PrivateDebounceReply(Star):
 
     def __init__(self, context: Context):
@@ -116,7 +116,7 @@ class PrivateDebounceReply(Star):
                 task.cancel()
                 logger.debug(f"[Debounce] 取消会话 {session_id} 的旧任务")
 
-            # 创建新的防抖任务
+            # 创建新的防抖任务 - 这里传递 event 的副本
             self.tasks[session_id] = asyncio.create_task(
                 self._debounce(session_id, event)
             )
@@ -164,12 +164,12 @@ class PrivateDebounceReply(Star):
                 # 清空缓存
                 self.buffers[session_id] = []
 
-                # 使用官方推荐的 chain_result 发送消息
-                # 构建消息链：使用 Plain 组件
+                # 使用 event.send() 发送消息（不使用 yield）
+                # 构建消息链
                 message_chain = [Plain(merged_text)]
                 
-                # 使用 yield 返回消息
-                yield event.chain_result(message_chain)
+                # 发送消息
+                await event.send(message_chain)
                 
                 logger.info(f"[Debounce] 已发送合并后的消息到LLM")
 
