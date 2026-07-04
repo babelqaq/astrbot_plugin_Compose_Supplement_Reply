@@ -1,12 +1,12 @@
-# 消息合并回复插件 / Compose Supplement Reply
+# 多条消息合并回复插件 / Compose Supplement Reply
 
 ## 📖 简介 / Introduction
 
 **中文**  
-本插件将用户在私聊中短时间内发送的多条消息合并为一条，再交由 LLM 统一处理并生成回复。
+喜欢发送多条短消息但又不想astrbot每条都回吗？本插件将用户在私聊中短时间内发送的多条消息合并为一条，再交由模型统一处理并生成回复。
 
 **English**  
-This is an AstrBot plugin that merges multiple private messages sent within a short time into one, then sends the merged content to the LLM for unified processing and reply.
+Want to send multiple short messages but don't want Astrbot to reply to each one individually? This plugin combines several messages sent by a user in quick succession during private chat into a single message, which is then processed and responded to collectively by the model.
 
 ### 适用场景 / Use Cases
 
