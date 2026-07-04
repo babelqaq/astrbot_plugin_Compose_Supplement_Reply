@@ -5,8 +5,8 @@ import asyncio
 from collections import defaultdict
 
 
-@register("Compose Supplement Reply", "babelqaq", "对用户的多条新消息进行整合并回复", "1.0.1")
-class StableDebounceSafe(Star):
+@register("Compose Supplement Reply", "babelqaq", "对用户的多条新消息进行整合并回复", "1.0.2")
+class ComposeSupplementReply(Star):
 
     def __init__(self, context: Context):
         super().__init__(context)
@@ -15,9 +15,10 @@ class StableDebounceSafe(Star):
         self.tasks = {}
         self.locks = defaultdict(asyncio.Lock)
         self.delay = 1.0
+        self.pending_sessions = set()
 
     async def initialize(self):
-        logger.info("[Debounce SAFE] init")
+        logger.info("[Compose Reply] initialized")
 
     @filter.on_waiting_llm_request()
     async def on_waiting(self, event: AstrMessageEvent):
@@ -29,52 +30,53 @@ class StableDebounceSafe(Star):
             return
 
         async with self.locks[session]:
-
-            # 1. 缓冲消息
+            # 添加到缓冲区
             self.buffers[session].append(msg)
-
-            # 2. 取消旧任务（防抖核心）
+            logger.info(f"[Compose Reply] 缓冲消息 - 会话: {session[:8]} 内容: {msg[:30]}...")
+            
+            # 取消旧任务（防抖核心）
             task = self.tasks.get(session)
             if task and not task.done():
                 task.cancel()
+                logger.debug(f"[Compose Reply] 取消旧任务")
 
-            # 3. 创建新的 flush 任务
+            # 创建新的等待任务
             self.tasks[session] = asyncio.create_task(
-                self._flush(session, event)
+                self._wait_and_mark_ready(session)
             )
 
-            # 4. 阻断当前 LLM 请求
-            event.stop_event()
+        # 等待合并完成（阻塞当前请求）
+        while session in self.pending_sessions:
+            await asyncio.sleep(0.1)
 
-    async def _flush(self, session: str, event: AstrMessageEvent):
-
+    async def _wait_and_mark_ready(self, session: str):
+        """等待延迟后标记会话准备就绪"""
         try:
             await asyncio.sleep(self.delay)
-
-            # 取出并合并消息（必须在锁内保证一致性）
             async with self.locks[session]:
-                msgs = self.buffers.get(session, [])
-                if not msgs:
-                    return
-
-                merged = "\n".join(msgs)
-                self.buffers[session].clear()
-
-            # ⭐ 后台日志输出
-            logger.info(f"[Debounce SAFE MERGED]\n{merged}")
-
-            # ⭐ 关键：重新进入 LLM 链路
-            # 注意：这里不要再 hold lock
-            await event.send(merged)
-
+                self.pending_sessions.discard(session)
         except asyncio.CancelledError:
             pass
 
-        except Exception as e:
-            logger.error(f"[Debounce SAFE] error: {e}")
+    @filter.on_llm_request()
+    async def on_llm_request(self, event: AstrMessageEvent, req):
+        """在调用LLM前合并消息"""
+        session = event.session_id
+
+        async with self.locks[session]:
+            msgs = self.buffers.get(session, [])
+            if len(msgs) > 1:
+                merged = "\n".join(msgs)
+                logger.info(f"[Compose Reply] 合并消息 - 会话: {session[:8]} 消息数: {len(msgs)}")
+                logger.info(f"[Compose Reply] 合并内容:\n{merged}")
+                # 修改请求文本为合并后的消息
+                req.text = merged
+            
+            # 清空缓冲区
+            self.buffers[session] = []
 
     async def terminate(self):
         for task in self.tasks.values():
             if task and not task.done():
                 task.cancel()
-        logger.info("[Debounce SAFE] terminated")
+        logger.info("[Compose Reply] terminated")
