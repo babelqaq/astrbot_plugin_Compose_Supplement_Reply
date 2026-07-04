@@ -7,7 +7,7 @@ import time
 from typing import Dict, List, Optional
 
 
-@register("Compose Supplement Reply", "babelqaq", "对用户的多条新消息进行整合并回复", "1.0.16")
+@register("Compose Supplement Reply", "babelqaq", "对用户的多条新消息进行整合并回复", "1.0.17")
 class PrivateDebounceReply(Star):
     """私聊消息防抖合并插件"""
 
@@ -19,45 +19,16 @@ class PrivateDebounceReply(Star):
         self.last_activity: Dict[str, float] = {}
         
         # 可配置参数
-        self.wait_time: float = 20
+        self.wait_time: float = 1.5
         self.cleanup_interval: int = 60
         self.session_timeout: int = 300
         
         self._cleanup_task: Optional[asyncio.Task] = None
-        self._config_loaded: bool = False
 
     async def initialize(self):
         """插件初始化"""
-        logger.info("Private Debounce Reply initialized")
-        await self._load_config()
+        logger.info("[PrivateDebounceReply] 插件初始化完成")
         self._cleanup_task = asyncio.create_task(self._cleanup_sessions())
-
-    async def _load_config(self):
-        """从 KV 存储加载配置"""
-        try:
-            config = await self.get_kv_data("debounce_config", {})
-            if config:
-                self.wait_time = config.get("wait_time", self.wait_time)
-                self.cleanup_interval = config.get("cleanup_interval", self.cleanup_interval)
-                self.session_timeout = config.get("session_timeout", self.session_timeout)
-                logger.info(f"[Config] 加载配置: wait_time={self.wait_time}s")
-            else:
-                await self._save_config()
-            self._config_loaded = True
-        except Exception as e:
-            logger.warning(f"[Config] 加载配置失败: {e}")
-
-    async def _save_config(self):
-        """保存配置到 KV 存储"""
-        try:
-            config = {
-                "wait_time": self.wait_time,
-                "cleanup_interval": self.cleanup_interval,
-                "session_timeout": self.session_timeout
-            }
-            await self.put_kv_data("debounce_config", config)
-        except Exception as e:
-            logger.error(f"[Config] 保存配置失败: {e}")
 
     async def _cleanup_sessions(self):
         """定期清理过期会话"""
@@ -90,22 +61,21 @@ class PrivateDebounceReply(Star):
 
     @filter.on_waiting_llm_request()
     async def on_waiting(self, event: AstrMessageEvent):
-        """拦截私聊消息进行防抖处理"""
-        # 只处理私聊消息
-        if not hasattr(event, 'is_private') or not event.is_private:
-            return
-            
+        """拦截消息进行防抖处理"""
+        # 详细日志，确认钩子被触发
+        logger.info(f"[Debounce] on_waiting 被触发，session: {event.session_id}, msg: {event.message_str[:30] if event.message_str else '空'}...")
+        
         session_id = event.session_id
         msg = event.message_str.strip()
 
         # 忽略空消息和命令
         if not msg or msg.startswith("/"):
+            logger.debug(f"[Debounce] 忽略空消息或命令: {msg}")
             return
 
-        # 【关键修复】检查是否是合并后重新发送的消息
-        # 如果是，则放行让它正常进入 LLM
+        # 【重要】检查是否是合并后重新发送的消息
         if hasattr(event, 'metadata') and event.metadata and event.metadata.get('is_merged'):
-            logger.info(f"[Debounce] 检测到合并消息，放行: {msg[:30]}...")
+            logger.info(f"[Debounce] 检测到合并消息（带标记），放行: {msg[:30]}...")
             return
 
         # 更新最后活动时间
@@ -114,7 +84,7 @@ class PrivateDebounceReply(Star):
         async with self.lock[session_id]:
             # 缓存消息
             self.buffers[session_id].append(msg)
-            logger.info(f"[Debounce] 会话 {session_id} 缓冲消息: {msg[:30]}...")
+            logger.info(f"[Debounce] 会话 {session_id} 缓冲消息: {msg[:30]}... (当前缓冲区: {len(self.buffers[session_id])} 条)")
 
             # 取消旧任务
             old_task = self.tasks.get(session_id)
@@ -129,15 +99,18 @@ class PrivateDebounceReply(Star):
 
             # 阻止当前消息进入 LLM
             event.stop_event()
+            logger.info(f"[Debounce] 已阻止消息进入 LLM: {msg[:30]}...")
 
     async def _debounce(self, session_id: str, event: AstrMessageEvent):
         """防抖核心逻辑"""
         try:
+            logger.debug(f"[Debounce] 开始防抖等待 {self.wait_time}s, session: {session_id}")
             await asyncio.sleep(self.wait_time)
 
             async with self.lock[session_id]:
                 messages = self.buffers.get(session_id, [])
                 if not messages:
+                    logger.debug(f"[Debounce] 会话 {session_id} 缓冲区为空，跳过")
                     return
 
                 # 检查是否还有新消息
@@ -167,7 +140,7 @@ class PrivateDebounceReply(Star):
                 # 清空缓存
                 self.buffers[session_id] = []
 
-                # 【关键修复】创建带标记的 metadata
+                # 创建带标记的 metadata
                 if not hasattr(event, 'metadata') or event.metadata is None:
                     event.metadata = {}
                 event.metadata['is_merged'] = True
@@ -207,60 +180,9 @@ class PrivateDebounceReply(Star):
             merged.append(msg)
         return "\n".join(merged)
 
-    @filter.command("debounce_config")
-    async def config_command(self, event: AstrMessageEvent):
-        """配置管理指令"""
-        args = event.message_str.strip().split()
-        
-        if len(args) == 1:
-            info = (
-                f"📊 当前防抖配置\n"
-                f"⏱️  等待时间: {self.wait_time}s\n"
-                f"🧹 清理间隔: {self.cleanup_interval}s\n"
-                f"⏰ 会话超时: {self.session_timeout}s"
-            )
-            yield event.plain_result(info)
-            return
-        
-        if len(args) == 3:
-            key, val = args[1], args[2]
-            try:
-                value = float(val)
-                old_value = None
-                
-                if key == "wait_time":
-                    if value < 0.3:
-                        yield event.plain_result("❌ 等待时间不能小于 0.3 秒")
-                        return
-                    old_value = self.wait_time
-                    self.wait_time = value
-                elif key == "cleanup_interval":
-                    if value < 10:
-                        yield event.plain_result("❌ 清理间隔不能小于 10 秒")
-                        return
-                    old_value = self.cleanup_interval
-                    self.cleanup_interval = int(value)
-                elif key == "session_timeout":
-                    if value < 30:
-                        yield event.plain_result("❌ 会话超时不能小于 30 秒")
-                        return
-                    old_value = self.session_timeout
-                    self.session_timeout = int(value)
-                else:
-                    yield event.plain_result(f"❌ 未知参数: {key}")
-                    return
-                
-                await self._save_config()
-                yield event.plain_result(f"✅ {key} 已从 {old_value} 更新为 {value}")
-            except ValueError:
-                yield event.plain_result("❌ 请输入有效的数字")
-            return
-        
-        yield event.plain_result("❌ 用法: /debounce_config [key] [value]")
-
     async def terminate(self):
         """插件卸载时清理资源"""
-        logger.info("Private Debounce Reply 正在终止...")
+        logger.info("PrivateDebounceReply 正在终止...")
         
         if self._cleanup_task:
             self._cleanup_task.cancel()
@@ -277,9 +199,8 @@ class PrivateDebounceReply(Star):
                 except asyncio.CancelledError:
                     pass
         
-        await self._save_config()
         self.buffers.clear()
         self.tasks.clear()
         self.lock.clear()
         self.last_activity.clear()
-        logger.info("Private Debounce Reply 已终止")
+        logger.info("PrivateDebounceReply 已终止")
