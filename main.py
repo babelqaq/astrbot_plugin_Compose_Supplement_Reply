@@ -7,9 +7,9 @@ import time
 from typing import Dict, List, Optional
 
 
-@register("Compose Supplement Reply", "babelqaq", "对用户的多条新消息进行整合并回复", "1.0.17")
+@register("Compose Supplement Reply", "babelqaq", "对用户的多条新消息进行整合并回复", "1.0.18")
 class PrivateDebounceReply(Star):
-    """私聊消息防抖合并插件"""
+    """私聊消息防抖合并插件 - 优化版"""
 
     def __init__(self, context: Context):
         super().__init__(context)
@@ -18,8 +18,9 @@ class PrivateDebounceReply(Star):
         self.lock: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self.last_activity: Dict[str, float] = {}
         
-        # 可配置参数
-        self.wait_time: float = 1.5
+        # 【优化】调整默认参数，适应普通人输入速度
+        self.wait_time: float = 20.0  # 防抖等待时间
+        self.max_wait_time: float = 60.0  # 最大等待时间，防止无限等待
         self.cleanup_interval: int = 60
         self.session_timeout: int = 300
         
@@ -27,7 +28,7 @@ class PrivateDebounceReply(Star):
 
     async def initialize(self):
         """插件初始化"""
-        logger.info("[PrivateDebounceReply] 插件初始化完成")
+        logger.info(f"[PrivateDebounceReply] 插件初始化完成，等待时间: {self.wait_time}秒")
         self._cleanup_task = asyncio.create_task(self._cleanup_sessions())
 
     async def _cleanup_sessions(self):
@@ -62,20 +63,16 @@ class PrivateDebounceReply(Star):
     @filter.on_waiting_llm_request()
     async def on_waiting(self, event: AstrMessageEvent):
         """拦截消息进行防抖处理"""
-        # 详细日志，确认钩子被触发
-        logger.info(f"[Debounce] on_waiting 被触发，session: {event.session_id}, msg: {event.message_str[:30] if event.message_str else '空'}...")
-        
         session_id = event.session_id
         msg = event.message_str.strip()
 
         # 忽略空消息和命令
         if not msg or msg.startswith("/"):
-            logger.debug(f"[Debounce] 忽略空消息或命令: {msg}")
             return
 
-        # 【重要】检查是否是合并后重新发送的消息
+        # 检查是否是合并后重新发送的消息
         if hasattr(event, 'metadata') and event.metadata and event.metadata.get('is_merged'):
-            logger.info(f"[Debounce] 检测到合并消息（带标记），放行: {msg[:30]}...")
+            logger.info(f"[Debounce] 检测到合并消息，放行")
             return
 
         # 更新最后活动时间
@@ -84,7 +81,7 @@ class PrivateDebounceReply(Star):
         async with self.lock[session_id]:
             # 缓存消息
             self.buffers[session_id].append(msg)
-            logger.info(f"[Debounce] 会话 {session_id} 缓冲消息: {msg[:30]}... (当前缓冲区: {len(self.buffers[session_id])} 条)")
+            logger.info(f"[Debounce] 会话 {session_id} 缓冲消息: {msg[:30]}... (缓冲区: {len(self.buffers[session_id])} 条)")
 
             # 取消旧任务
             old_task = self.tasks.get(session_id)
@@ -99,30 +96,34 @@ class PrivateDebounceReply(Star):
 
             # 阻止当前消息进入 LLM
             event.stop_event()
-            logger.info(f"[Debounce] 已阻止消息进入 LLM: {msg[:30]}...")
 
     async def _debounce(self, session_id: str, event: AstrMessageEvent):
         """防抖核心逻辑"""
         try:
-            logger.debug(f"[Debounce] 开始防抖等待 {self.wait_time}s, session: {session_id}")
+            # 【关键】等待防抖时间
             await asyncio.sleep(self.wait_time)
 
             async with self.lock[session_id]:
                 messages = self.buffers.get(session_id, [])
                 if not messages:
-                    logger.debug(f"[Debounce] 会话 {session_id} 缓冲区为空，跳过")
                     return
 
-                # 检查是否还有新消息
+                # 【优化】检查是否还有新消息（防抖重置检测）
                 current_time = time.time()
                 last_time = self.last_activity.get(session_id, current_time)
-                if current_time - last_time < self.wait_time * 0.8:
-                    logger.debug(f"[Debounce] 会话 {session_id} 有新消息，重新等待")
+                time_since_last = current_time - last_time
+                
+                # 如果距离最后一条消息的时间小于防抖时间的 80%，说明用户还在输入，重新等待
+                if time_since_last < self.wait_time * 0.8:
+                    logger.debug(f"[Debounce] 会话 {session_id} 检测到新消息({time_since_last:.1f}s 前)，重新等待")
                     self.tasks[session_id] = asyncio.create_task(
                         self._debounce(session_id, event)
                     )
                     return
 
+                # 【优化】如果消息数量较多，可以适当缩短等待时间
+                # 但这里保持统一等待，确保用户体验一致
+                
                 # 合并消息
                 merged_text = self._merge_messages(messages)
                 message_count = len(messages)
@@ -135,6 +136,7 @@ class PrivateDebounceReply(Star):
                     logger.info(f"[Debounce]   {idx}. {msg}")
                 logger.info(f"[Debounce] 合并后的消息:")
                 logger.info(f"[Debounce] {merged_text}")
+                logger.info(f"[Debounce] 等待时间: {self.wait_time}s")
                 logger.info(f"[Debounce] =====================================")
 
                 # 清空缓存
@@ -147,10 +149,10 @@ class PrivateDebounceReply(Star):
                 event.metadata['merged_count'] = message_count
                 event.metadata['original_messages'] = messages
 
-                # 发送合并后的消息（带标记）
+                # 发送合并后的消息
                 await event.send(event.plain_result(merged_text))
                 
-                logger.info(f"[Debounce] 已发送合并消息（带 merged 标记）")
+                logger.info(f"[Debounce] 已发送合并消息")
 
         except asyncio.CancelledError:
             logger.debug(f"[Debounce] 会话 {session_id} 任务取消")
@@ -173,12 +175,59 @@ class PrivateDebounceReply(Star):
             msg = msg.strip()
             if not msg:
                 continue
+            
+            # 智能添加标点
             if i > 0 and merged:
                 last_char = merged[-1][-1] if merged[-1] else ""
                 if last_char not in "。.!！?？；;：:”\"'’":
                     merged[-1] = merged[-1] + "。"
+            
             merged.append(msg)
+        
         return "\n".join(merged)
+
+    @filter.command("debounce_config")
+    async def config_command(self, event: AstrMessageEvent):
+        """配置管理指令
+        
+        用法：
+        /debounce_config              - 查看当前配置
+        /debounce_config wait_time 3.5 - 设置等待时间（秒），建议 2.0-5.0
+        """
+        args = event.message_str.strip().split()
+        
+        if len(args) == 1:
+            info = (
+                f"📊 当前防抖配置\n"
+                f"⏱️  等待时间: {self.wait_time} 秒\n"
+                f"🧹 清理间隔: {self.cleanup_interval} 秒\n"
+                f"⏰ 会话超时: {self.session_timeout} 秒\n\n"
+                f"💡 提示: 等待时间建议设为 2.0-5.0 秒\n"
+                f"   太短会过早合并，太长会影响体验"
+            )
+            yield event.plain_result(info)
+            return
+        
+        if len(args) == 3 and args[1] == "wait_time":
+            try:
+                value = float(args[2])
+                if value < 1.0:
+                    yield event.plain_result("❌ 等待时间不能小于 1.0 秒")
+                    return
+                if value > 10.0:
+                    yield event.plain_result("❌ 等待时间不能大于 10.0 秒")
+                    return
+                
+                old_value = self.wait_time
+                self.wait_time = value
+                yield event.plain_result(f"✅ 等待时间已从 {old_value}s 调整为 {value}s")
+                
+                # 注意：这里没有持久化存储，如需持久化可以添加 KV 存储
+            except ValueError:
+                yield event.plain_result("❌ 请输入有效的数字")
+            return
+        
+        yield event.plain_result("❌ 用法: /debounce_config wait_time [秒数]")
 
     async def terminate(self):
         """插件卸载时清理资源"""
