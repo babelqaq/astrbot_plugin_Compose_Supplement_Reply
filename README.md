@@ -33,12 +33,12 @@ Want to send multiple short messages but don't want Astrbot to reply to each one
 ## 📦 安装 / Installation
 
 ### 方法一：通过 AstrBot 插件市场安装（推荐）
-在 AstrBot WebUI 的 **插件管理** 页面搜索 `Compose Supplement Reply` 并安装。
+在 AstrBot WebUI 的 **插件管理** 页面搜索 `MergeChat` 并安装。
 
 ### 方法二：手动安装
 ```bash
 cd /path/to/astrbot/data/plugins
-git clone https://github.com/babelqaq/astrbot_plugin_Compose_Supplement_Reply.git
+git clone https://github.com/babelqaq/astrbot_plugin_MergeChat.git
 ```
 
 # 配置与使用示例
