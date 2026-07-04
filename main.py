@@ -7,7 +7,7 @@ import time
 from typing import Dict, List, Optional
 
 
-@register("Compose Supplement Reply", "babelqaq", "对用户的多条新消息进行整合并回复", "1.0.22")
+@register("Compose Supplement Reply", "babelqaq", "对用户的多条新消息进行整合并回复", "1.0.23")
 class PrivateDebounceReply(Star):
     """私聊消息防抖合并插件"""
 
@@ -106,96 +106,89 @@ class PrivateDebounceReply(Star):
                 self.buffers[session_id] = []
 
     async def _call_llm_and_reply(self, event: AstrMessageEvent, merged_text: str):
-        """调用 LLM，失败时自动尝试配置文件中的回退模型"""
+        """调用 LLM，失败时自动尝试配置文件中的其他模型"""
         try:
-            umo = event.unified_msg_origin
-            # 获取默认模型
-            provider_id = await self.context.get_current_chat_provider_id(umo=umo)
+            # 1. 获取当前会话默认模型
+            primary_provider_id = await self.context.get_current_chat_provider_id(
+                event.unified_msg_origin
+            )
             
-            if not provider_id:
-                logger.warning("[LLM] 无法获取模型ID，返回合并消息")
+            # 2. 从 AstrBot 配置中获取所有已配置的模型提供商 ID 列表
+            all_provider_ids = await self._get_configured_provider_ids()
+            
+            # 3. 构建尝试顺序：主模型优先，然后去重排列其他模型
+            providers_to_try = []
+            if primary_provider_id:
+                providers_to_try.append(primary_provider_id)
+            for pid in all_provider_ids:
+                if pid != primary_provider_id and pid not in providers_to_try:
+                    providers_to_try.append(pid)
+            
+            if not providers_to_try:
+                logger.warning("[LLM] 没有可用的模型提供商")
                 await event.send(event.plain_result(merged_text))
                 return
-
-            # 尝试调用默认模型
-            try:
-                llm_resp = await self.context.llm_generate(
-                    chat_provider_id=provider_id,
-                    prompt=merged_text,
-                )
-                reply_text = llm_resp.completion_text if llm_resp else "（LLM 未返回有效回复）"
-                await event.send(event.plain_result(reply_text))
-                await self._save_conversation(event, merged_text, reply_text)
-                return
-
-            except Exception as e:
-                error_msg = str(e)
-                logger.warning(f"[LLM] 主模型调用失败 ({error_msg})，尝试回退模型...")
-                
-                # 【关键】从 AstrBot 配置中获取回退模型列表
-                fallback_providers = await self._get_fallback_providers()
-                
-                if fallback_providers:
-                    for fallback_id in fallback_providers:
-                        try:
-                            logger.info(f"[LLM] 尝试回退模型: {fallback_id}")
-                            llm_resp = await self.context.llm_generate(
-                                chat_provider_id=fallback_id,
-                                prompt=merged_text,
-                            )
-                            reply_text = llm_resp.completion_text if llm_resp else "（LLM 未返回有效回复）"
-                            await event.send(event.plain_result(reply_text))
-                            await self._save_conversation(event, merged_text, reply_text)
-                            return
-                        except Exception as fallback_error:
-                            logger.warning(f"[LLM] 回退模型 {fallback_id} 失败: {fallback_error}")
-                            continue
-                
-                # 所有模型都失败
-                logger.error("[LLM] 所有模型均不可用")
-                await event.send(event.plain_result(
-                    f"⚠️ 模型服务暂时不可用（{error_msg}），请稍后重试。"
-                ))
+            
+            # 4. 依次尝试调用
+            last_error = None
+            for provider_id in providers_to_try:
+                try:
+                    logger.info(f"[LLM] 尝试模型: {provider_id}")
+                    llm_resp = await self.context.llm_generate(
+                        chat_provider_id=provider_id,
+                        prompt=merged_text,
+                    )
+                    reply_text = llm_resp.completion_text if llm_resp else "（LLM 未返回有效回复）"
+                    await event.send(event.plain_result(reply_text))
+                    await self._save_conversation(event, merged_text, reply_text)
+                    return  # 成功则退出
+                except Exception as e:
+                    last_error = e
+                    logger.warning(f"[LLM] 模型 {provider_id} 调用失败: {e}")
+                    continue
+            
+            # 所有模型都失败
+            error_msg = str(last_error) if last_error else "未知错误"
+            logger.error(f"[LLM] 所有可用模型均调用失败: {error_msg}")
+            await event.send(event.plain_result(
+                f"⚠️ 模型服务暂时不可用（{error_msg}），请稍后重试。"
+            ))
 
         except Exception as e:
             logger.error(f"[LLM] 处理失败: {e}")
             await event.send(event.plain_result(merged_text))
 
-    async def _get_fallback_providers(self) -> List[str]:
-        """从 AstrBot 配置中获取回退模型列表"""
+    async def _get_configured_provider_ids(self) -> List[str]:
+        """从 AstrBot 配置中获取所有已配置的模型提供商 ID 列表"""
         try:
-            # 方法1：从全局配置读取回退模型
-            # 如果 AstrBot 在配置中有 fallback_providers 字段
-            global_config = self.context.get_config()
-            if global_config and hasattr(global_config, 'fallback_providers'):
-                fallback = global_config.fallback_providers
-                if fallback and isinstance(fallback, list):
-                    return fallback
+            # 获取 AstrBot 核心配置
+            config = self.context.get_config() if hasattr(self.context, 'get_config') else None
+            if not config:
+                logger.debug("[LLM] 无法获取 AstrBot 配置")
+                return []
             
-            # 方法2：从 AstrBot 的系统配置读取（如果有）
-            # 这依赖于 AstrBot 的配置结构
-            config_path = "core.llm.fallback_providers"  # 假设的配置路径
-            fallback = self.context.get_config_value(config_path, [])
-            if fallback and isinstance(fallback, list):
-                return fallback
+            # 根据文档，配置中的 'provider' 列表包含了所有提供商配置
+            providers_config = config.get('provider', [])
+            if not providers_config:
+                logger.debug("[LLM] 配置中未找到 'provider' 列表")
+                return []
             
-            # 方法3：从插件配置文件读取（可选）
-            if hasattr(self, 'config') and self.config:
-                fallback = self.config.get("fallback_providers", [])
-                if fallback and isinstance(fallback, list):
-                    return fallback
+            # 提取每个提供商的 ID
+            provider_ids = []
+            for p in providers_config:
+                if isinstance(p, dict):
+                    # 提供商配置可能是字典，包含 'id' 或 'provider_id' 字段
+                    pid = p.get('id') or p.get('provider_id')
+                    if pid:
+                        provider_ids.append(pid)
+                elif hasattr(p, 'id'):
+                    provider_ids.append(p.id)
             
-            # 默认回退列表（常见的提供商 ID）
-            default_fallback = [
-                "openai_chat_completion",
-                "anthropic_chat_completion", 
-                "googlegenai_chat_completion",
-            ]
-            logger.debug(f"[LLM] 使用默认回退模型列表: {default_fallback}")
-            return default_fallback
+            logger.debug(f"[LLM] 从配置中获取到 {len(provider_ids)} 个提供商: {provider_ids}")
+            return provider_ids
             
         except Exception as e:
-            logger.debug(f"[LLM] 获取回退模型列表失败: {e}")
+            logger.debug(f"[LLM] 获取配置提供商列表失败: {e}")
             return []
 
     async def _save_conversation(self, event: AstrMessageEvent, user_msg: str, assistant_msg: str):
